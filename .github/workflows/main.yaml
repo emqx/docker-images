@@ -18,6 +18,7 @@ jobs:
         image:
           - 'package_cloud'
           - 'certgen'
+          - 'gitlint'
 
     steps:
       - uses: actions/checkout@v3
