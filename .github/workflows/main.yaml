@@ -19,6 +19,7 @@ jobs:
           - 'package_cloud'
           - 'certgen'
           - 'gitlint'
+          - 'selenium-chrome'
 
     steps:
       - uses: actions/checkout@v3
@@ -30,6 +31,7 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ github.token }}
+
       - uses: docker/build-push-action@v3
         with:
           push: true
