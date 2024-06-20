@@ -11,15 +11,24 @@ defaults:
     shell: 'bash -Eeuo pipefail {0}'
 
 jobs:
+  prepare:
+    runs-on: ubuntu-22.04
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v3
+      - name: Generate matrix
+        id: set-matrix
+        run: |
+          images_json_obj="$(./generate-matrix.sh)"
+          echo "matrix=${images_json_obj}" | tee -a $GITHUB_OUTPUT
+
   main:
+    needs: prepare
     runs-on: ubuntu-22.04
     strategy:
-      matrix:
-        image:
-          - 'package_cloud'
-          - 'certgen'
-          - 'gitlint'
-          - 'selenium-chrome'
+      fail-fast: false
+      matrix: ${{ fromJson(needs.prepare.outputs.matrix) }}
 
     steps:
       - uses: actions/checkout@v3
@@ -36,6 +45,6 @@ jobs:
         with:
           push: true
           platforms: linux/amd64,linux/arm64
-          tags: ghcr.io/emqx/${{ matrix.image }}
-          file: ${{ matrix.image }}/Dockerfile
-          context: ${{ matrix.image }}
+          tags: ghcr.io/emqx/${{ matrix.image[0] }}:${{ matrix.image[1] }}
+          file: ${{ matrix.image[0] }}/Dockerfile
+          context: ${{ matrix.image[0] }}
