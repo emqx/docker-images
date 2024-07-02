@@ -6,7 +6,12 @@ IMGS=''
 
 while read dir; do
     vsn=$(cat "${dir}/vsn")
-    img="[\"$dir\", \"$vsn\"]"
+    if [ -f "${dir}/platforms" ]; then
+        platforms=$(cat "${dir}/platforms")
+    else
+        platforms='linux/amd64,linux/arm64'
+    fi
+    img="[\"$dir\", \"$vsn\", \"$platforms\"]"
     if [ -n "$IMGS" ]; then
         IMGS="${IMGS},${img}"
     else
