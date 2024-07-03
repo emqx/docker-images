@@ -56,7 +56,9 @@ function retry(){
 function initializeAddHost(){
 
     # validate if host is part of cluster, then skip
-    if [[ $(couchbase-cli server-list -c $CLUSTER -u $USER -p $PASS | grep $(hostname --ip-address):$PORT) ]]; then
+    local host_ip
+    host_ip="127.0.0.1" # $(hostname --ip-address)
+    if [[ $(couchbase-cli server-list -c $CLUSTER -u $USER -p $PASS | grep $host_ip:$PORT) ]]; then
         echo "server is already part of the cluster. skipping."
         return 0;
     fi
