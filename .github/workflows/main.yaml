@@ -43,7 +43,7 @@ jobs:
 
       - uses: docker/build-push-action@15560696de535e4014efeff63c48f16952e52dd1 # v6.2.0
         with:
-          push: true
+          push: ${{ github.event_name == 'push' }}
           platforms: ${{ matrix.image[2] }}
           tags: ghcr.io/emqx/${{ matrix.image[0] }}:${{ matrix.image[1] }}
           file: ${{ matrix.image[0] }}/Dockerfile
