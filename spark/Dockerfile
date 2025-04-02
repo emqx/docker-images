@@ -25,6 +25,7 @@ RUN apt-get update && \
       openjdk-17-jdk \
       build-essential \
       software-properties-common \
+      rlwrap \
       ssh && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
@@ -41,6 +42,13 @@ RUN curl https://github.com/SpencerPark/IJava/releases/download/v1.3.0/ijava-1.3
   && unzip ijava-1.3.0.zip \
   && python3 install.py --sys-prefix \
   && rm ijava-1.3.0.zip
+
+# Install Clojure
+RUN curl -L -O https://github.com/clojure/brew-install/releases/latest/download/linux-install.sh && \
+    chmod +x linux-install.sh && \
+    ./linux-install.sh && \
+    rm ./linux-install.sh && \
+    clojure --version
 
 # Optional env variables
 ENV SPARK_HOME=${SPARK_HOME:-"/opt/spark"}
