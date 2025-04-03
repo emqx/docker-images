@@ -1,0 +1,25 @@
+ARG BUILD_FROM=clojure:temurin-17-tools-deps-1.12.0.1530-bookworm-slim
+ARG RUN_FROM=eclipse-temurin:11-jdk-ubi9-minimal
+
+FROM ${BUILD_FROM} AS builder
+
+RUN mkdir -p /usr/src/app
+WORKDIR /usr/src/app
+
+# Cache layer with dependencies
+COPY ./deps.edn /usr/src/app/deps.edn
+RUN clojure -X:deps prep && \
+    clojure -P -T:build
+
+COPY ./build.clj /usr/src/app/build.clj
+COPY ./src /usr/src/app/src
+RUN clojure -T:build uber && \
+    mv target/spark-query-*-standalone.jar app-standalone.jar
+
+FROM ${RUN_FROM} AS runner
+
+COPY --from=builder /usr/src/app/app-standalone.jar /opt/proxy/app-standalone.jar
+
+WORKDIR /opt/proxy
+
+CMD ["java", "-jar", "app-standalone.jar"]
