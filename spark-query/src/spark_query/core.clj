@@ -3,6 +3,8 @@
    [clojure.data.json :as json]
    [clojure.java.io :as io]
    [clojure.pprint :refer [pprint]]
+   [cider.nrepl :refer [cider-nrepl-handler]]
+   [nrepl.server :as nrepl-server]
    [org.httpkit.server :as server]
    [compojure.core :refer [defroutes GET POST]])
   (:import
@@ -89,6 +91,7 @@
   [& args]
   (try
     (println "starting server on port" PORT)
+    (nrepl-server/start-server :port 7890 :bind "0.0.0.0" :handler cider-nrepl-handler)
     (server/run-server app-routes {:port PORT})
     (println "started server on port" PORT)
     (block-forever)
