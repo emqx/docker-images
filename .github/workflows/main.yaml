@@ -48,3 +48,5 @@ jobs:
           tags: ghcr.io/emqx/${{ matrix.image[0] }}:${{ matrix.image[1] }}
           file: ${{ matrix.image[0] }}/Dockerfile
           context: ${{ matrix.image[0] }}
+          cache-from: type=gha
+          cache-to: type=gha
