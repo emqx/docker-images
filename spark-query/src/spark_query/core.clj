@@ -75,17 +75,19 @@
       iterator-seq
       (into [])))
 
-(defn table-partitions
+(defn partition-data->vec
+  [pdata]
+  (let [size (.size pdata)
+        fields (->> pdata
+                    .getPartitionType
+                    .fields
+                    (mapv #(.name %)))
+        values (mapv #(.get pdata %) (range size))]
+    (zipmap fields values)))
+
+(defn table-partitions-from-meta
   [table]
-  (letfn [(partition-data->vec [pdata]
-            (let [size (.size pdata)
-                  fields (->> pdata
-                              .getPartitionType
-                              .fields
-                              (mapv #(.name %)))
-                  values (mapv #(.get pdata %) (range size))]
-              (zipmap fields values)))
-          (content-data-file->vec [content-data-file]
+  (letfn [(content-data-file->vec [content-data-file]
             (-> content-data-file
                 .partition
                 partition-data->vec))]
@@ -93,6 +95,18 @@
         .currentSnapshot
         (.addedDataFiles (.io table))
         (->> (map content-data-file->vec)))))
+
+(defn table-partitions-from-data
+  [table]
+  (-> table
+      .newScan
+      .planTasks
+      .iterator
+      iterator-seq
+      (->> (mapcat #(.files %))
+           (map #(-> %
+                     .partition
+                     partition-data->vec)))))
 
 (defn handle-scan-table [ns-in table-in]
   (let [table (load-table (get-catalog) ns-in table-in)
@@ -104,8 +118,11 @@
 
 (defn handle-table-partitions [ns-in table-in]
   (let [table (load-table (get-catalog) ns-in table-in)
-        partitions (table-partitions table)
-        response-body (json/write-str partitions)]
+        partitions-from-meta (table-partitions-from-meta table)
+        partitions-from-data (table-partitions-from-data table)
+        response {:from-data partitions-from-data
+                  :from-meta partitions-from-meta}
+        response-body (json/write-str response)]
     {:body response-body}))
 
 (defroutes app-routes
