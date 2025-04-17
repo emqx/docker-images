@@ -66,21 +66,51 @@
         table (.loadTable catalog table-id)]
     table))
 
-(defn scan-table [ns-in table-in]
+(defn scan-table
+  [table]
+  (-> table
+      IcebergGenerics/read
+      .build
+      .iterator
+      iterator-seq
+      (into [])))
+
+(defn table-partitions
+  [table]
+  (letfn [(partition-data->vec [pdata]
+            (let [size (.size pdata)
+                  fields (->> pdata
+                              .getPartitionType
+                              .fields
+                              (mapv #(.name %)))
+                  values (mapv #(.get pdata %) (range size))]
+              (zipmap fields values)))
+          (content-data-file->vec [content-data-file]
+            (-> content-data-file
+                .partition
+                partition-data->vec))]
+    (-> table
+        .currentSnapshot
+        (.addedDataFiles (.io table))
+        (->> (map content-data-file->vec)))))
+
+(defn handle-scan-table [ns-in table-in]
   (let [table (load-table (get-catalog) ns-in table-in)
-        rows (-> table
-                 IcebergGenerics/read
-                 .build
-                 .iterator
-                 iterator-seq
-                 (into []))
+        rows (scan-table table)
         response-body (->> rows
                            (mapv record->vec)
                            json/write-str)]
     {:body response-body}))
 
+(defn handle-table-partitions [ns-in table-in]
+  (let [table (load-table (get-catalog) ns-in table-in)
+        partitions (table-partitions table)
+        response-body (json/write-str partitions)]
+    {:body response-body}))
+
 (defroutes app-routes
-  (GET "/scan/:ns/:table" [ns table] (scan-table ns table)))
+  (GET "/scan/:ns/:table" [ns table] (handle-scan-table ns table))
+  (GET "/partitions/:ns/:table" [ns table] (handle-table-partitions ns table)))
 
 (defn- block-forever
   []
