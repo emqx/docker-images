@@ -6,6 +6,8 @@
    [cider.nrepl :refer [cider-nrepl-handler]]
    [nrepl.server :as nrepl-server]
    [org.httpkit.server :as server]
+   [ring.middleware.reload :refer [wrap-reload]]
+   [ring.util.request :as ring-req]
    [compojure.core :refer [defroutes GET POST]])
   (:import
    [java.util Properties]
@@ -20,10 +22,12 @@
     Record]
    [org.apache.iceberg.rest RESTCatalog]
    [org.apache.iceberg.aws.s3 S3FileIOProperties]
-   [org.apache.hadoop.conf Configuration])
+   [org.apache.hadoop.conf Configuration]
+   [org.apache.spark.sql SparkSession])
   (:gen-class))
 
 (def PORT 8090)
+(def NREPL-PORT 7890)
 
 (defn- record->vec
   [record]
@@ -48,6 +52,19 @@
             (.setConf catalog-config)
             (.initialize "demo" catalog-props))]
     catalog))
+
+(defn spark-session
+  []
+  (-> (SparkSession/builder)
+      (.config "spark.sql.defaultCatalog" "demo")
+      (.config "spark.sql.catalog.demo" "org.apache.iceberg.spark.SparkCatalog")
+      (.config "spark.sql.catalog.demo.type" "rest")
+      (.config "spark.sql.catalog.demo.uri" "http://iceberg-rest:8181")
+      (.config "spark.sql.catalog.demo.io-impl" "org.apache.iceberg.aws.s3.S3FileIO")
+      (.config "spark.sql.catalog.demo.warehouse" "s3://warehouse/wh/")
+      (.config "spark.sql.catalog.demo.s3.endpoint" "http://minio.net:9000")
+      (.master "local")
+      .getOrCreate))
 
 (def CATALOG (atom nil))
 
@@ -108,7 +125,8 @@
                      .partition
                      partition-data->vec)))))
 
-(defn handle-scan-table [ns-in table-in]
+(defn handle-scan-table
+  [ns-in table-in]
   (let [table (load-table (get-catalog) ns-in table-in)
         rows (scan-table table)
         response-body (->> rows
@@ -116,7 +134,8 @@
                            json/write-str)]
     {:body response-body}))
 
-(defn handle-table-partitions [ns-in table-in]
+(defn handle-table-partitions
+  [ns-in table-in]
   (let [table (load-table (get-catalog) ns-in table-in)
         partitions-from-meta (table-partitions-from-meta table)
         partitions-from-data (table-partitions-from-data table)
@@ -125,9 +144,24 @@
         response-body (json/write-str response)]
     {:body response-body}))
 
+(defn handle-spark-sql
+  [request]
+  (let [sql (ring-req/body-string request)
+        session (spark-session)
+        dataset (.sql session sql)
+        _ (.show dataset)
+        response-body (-> dataset
+                          .toJSON
+                          .toLocalIterator
+                          iterator-seq
+                          (->> (map json/read-str))
+                          json/write-str)]
+    {:body response-body}))
+
 (defroutes app-routes
   (GET "/scan/:ns/:table" [ns table] (handle-scan-table ns table))
-  (GET "/partitions/:ns/:table" [ns table] (handle-table-partitions ns table)))
+  (GET "/partitions/:ns/:table" [ns table] (handle-table-partitions ns table))
+  (POST "/sql" request (handle-spark-sql request)))
 
 (defn- block-forever
   []
@@ -135,11 +169,13 @@
     (Thread/sleep 60000)))
 
 (defn -main
-  [& args]
+  [& _args]
   (try
+    (println "starting nREPL server on port" NREPL-PORT)
+    (nrepl-server/start-server :port NREPL-PORT :bind "0.0.0.0" :handler cider-nrepl-handler)
+    (println "started nREPL server on port" NREPL-PORT)
     (println "starting server on port" PORT)
-    (nrepl-server/start-server :port 7890 :bind "0.0.0.0" :handler cider-nrepl-handler)
-    (server/run-server app-routes {:port PORT})
+    (server/run-server (wrap-reload #'app-routes) {:port PORT})
     (println "started server on port" PORT)
     (block-forever)
     (catch Exception e
