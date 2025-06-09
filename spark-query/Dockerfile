@@ -1,5 +1,5 @@
 ## Using an image with clojure so we may use `add-lib` in nREPL
-ARG RUN_FROM=clojure:temurin-17-tools-deps-1.12.0.1530-bookworm-slim
+ARG RUN_FROM=clojure:temurin-17-tools-deps-1.12.1.1543-trixie-slim
 
 FROM ${RUN_FROM}
 
