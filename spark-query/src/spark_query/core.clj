@@ -8,7 +8,8 @@
    [org.httpkit.server :as server]
    [ring.middleware.reload :refer [wrap-reload]]
    [ring.util.request :as ring-req]
-   [compojure.core :refer [defroutes GET POST]])
+   [compojure.core :refer [defroutes GET POST]]
+   [taoensso.telemere :as log])
   (:import
    [java.util Properties]
    [org.apache.iceberg
