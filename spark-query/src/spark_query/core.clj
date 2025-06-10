@@ -24,7 +24,10 @@
    [org.apache.iceberg.rest RESTCatalog]
    [org.apache.iceberg.aws.s3 S3FileIOProperties]
    [org.apache.hadoop.conf Configuration]
-   [org.apache.spark.sql SparkSession])
+   [org.apache.spark.sql SparkSession]
+   (org.apache.parquet.avro AvroParquetReader)
+   (org.apache.parquet.conf PlainParquetConfiguration)
+   (org.apache.parquet.io SeekableInputStream InputFile))
   (:gen-class))
 
 (def PORT 8090)
@@ -159,10 +162,98 @@
                           json/write-str)]
     {:body response-body}))
 
+(defn avro->json
+  [avro]
+  (-> avro
+      .toString
+      json/read-str))
+
+(defn new-seekable-input-stream
+  [in-ba]
+  (let [pos (atom 0)]
+    (letfn [(read1-byte []
+              (let [x (aget in-ba @pos)]
+                (swap! pos inc)
+                (byte x)))
+            (read1 []
+              (let [x (read1-byte)
+                    x-u (bit-and x 0xff)]
+                (int x-u)))
+            (read-array [out-array]
+              (let [to-read (alength out-array)]
+                (doseq [i (range to-read)]
+                  (let [x (read1-byte)]
+                    (aset-byte out-array i x)))))]
+      (proxy [SeekableInputStream] []
+        (read
+          ([]
+           (read1))
+          ([byte-buffer]
+           :todo))
+        (getPos []
+          @pos)
+        (seek [new-pos]
+          (reset! pos new-pos))
+        (readFully
+          ([out-array]
+           (if (bytes? out-array)
+             (read-array out-array)
+             ;; java.nio.ByteBuffer
+             (let [to-read (.remaining out-array)
+                   tmp (byte-array to-read (byte 0))]
+               (read-array tmp)
+               (.put out-array
+                     tmp
+                     (+ (.position out-array) (.arrayOffset out-array))
+                     (.remaining out-array)))))
+          ([out-array start len]
+           (doseq [i (range len)]
+             (let [x (read1-byte)]
+               (aset-byte out-array (+ start i) x)))))))))
+
+(defn new-mem-input-file
+  [in-ba]
+  (proxy [InputFile] []
+    (getLength []
+      (alength in-ba))
+    (newStream []
+      (new-seekable-input-stream in-ba))))
+
+(defn read-parquet-avro
+  [input-file]
+  (with-open [reader (AvroParquetReader/genericRecordReader
+                      input-file
+                      (PlainParquetConfiguration.
+                       {"parquet.avro.readInt96AsFixed" "true"}))]
+    (loop [record (.read reader)
+           acc []]
+      (if record
+        (recur (.read reader)
+               (->> record
+                    avro->json
+                    (conj acc)))
+        acc))))
+
+(defn read-parquet
+  [data-raw]
+  (with-open [in (io/input-stream data-raw)
+              out (java.io.ByteArrayOutputStream.)]
+    (io/copy in out)
+    (-> out
+        .toByteArray
+        new-mem-input-file
+        read-parquet-avro)))
+
+(defn handle-read-parquet
+  [request]
+  (let [result (read-parquet (:body request))]
+    {:body (json/write-str result)}))
+
 (defroutes app-routes
   (GET "/scan/:ns/:table" [ns table] (handle-scan-table ns table))
   (GET "/partitions/:ns/:table" [ns table] (handle-table-partitions ns table))
-  (POST "/sql" request (handle-spark-sql request)))
+  (POST "/sql" request (handle-spark-sql request))
+  (POST "/read-parquet" request (handle-read-parquet request)))
 
 (defn- block-forever
   []
