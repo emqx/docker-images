@@ -20,6 +20,7 @@
     TableIdentifier]
    [org.apache.iceberg.data
     IcebergGenerics
+    GenericRecord
     Record]
    [org.apache.iceberg.rest RESTCatalog]
    [org.apache.iceberg.aws.s3 S3FileIOProperties]
@@ -33,15 +34,22 @@
 (def PORT 8090)
 (def NREPL-PORT 7890)
 
-(defn- record->vec
-  [record]
-  (let [size (.size record)
-        columns (->> record
-                     .struct
-                     .fields
-                     (mapv #(.name %)))
-        values (mapv #(.get record %) (range size))]
-    (zipmap columns values)))
+(defn record->clj
+  "Converts Iceberg records to Clojure data types"
+  [x]
+  (cond
+    (instance? GenericRecord x)
+    (let [size (.size x)
+          columns (->> x
+                       .struct
+                       .fields
+                       (mapv #(.name %)))
+          values (mapv #(-> x (.get %) record->clj) (range size))]
+      (zipmap columns values))
+
+    (nil? x) x
+    (and (seqable? x) (not (string? x))) (mapv record->clj x)
+    :else x))
 
 (defn open-catalog
   []
@@ -81,11 +89,13 @@
       catalog)))
 
 (defn load-table
-  [catalog ns table]
-  (let [ns-id (Namespace/of (into-array String [ns]))
-        table-id (TableIdentifier/of ns-id table)
-        table (.loadTable catalog table-id)]
-    table))
+  ([ns table]
+   (load-table (get-catalog) ns table))
+  ([catalog ns table]
+   (let [ns-id (Namespace/of (into-array String [ns]))
+         table-id (TableIdentifier/of ns-id table)
+         table (.loadTable catalog table-id)]
+     table)))
 
 (defn scan-table
   [table]
@@ -134,7 +144,7 @@
   (let [table (load-table (get-catalog) ns-in table-in)
         rows (scan-table table)
         response-body (->> rows
-                           (mapv record->vec)
+                           (mapv record->clj)
                            json/write-str)]
     {:body response-body}))
 
