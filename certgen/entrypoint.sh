@@ -9,11 +9,21 @@ set -x
 HOST="*."
 DAYS=3650
 PASS="password"
+JKS_PREFIX="${CERTGEN_JKS_PREFIX:-kafka}"
+
+if [[ ! "$JKS_PREFIX" =~ ^[A-Za-z0-9._-]+$ ]]; then
+    echo "Invalid CERTGEN_JKS_PREFIX: $JKS_PREFIX" >&2
+    exit 1
+fi
+
+KEYSTORE="${JKS_PREFIX}.keystore.jks"
+TRUSTSTORE="${JKS_PREFIX}.truststore.jks"
 
 cd /var/lib/secret/
 
 # Delete old files
-rm -f ca.key ca.crt server.key server.csr server.crt client.key client.csr client.crt server.p12 kafka.keystore.jks kafka.truststore.jks
+rm -f ca.key ca.crt server.key server.csr client.key client.csr client.crt server.p12 \
+    server.crt "$KEYSTORE" "$TRUSTSTORE"
 
 ls
 
@@ -38,9 +48,15 @@ openssl pkcs12 -export -name "$HOST" -in server.crt -inkey server.key -out serve
 
 echo '= Import PKCS#12 into a java keystore'
 
-echo $PASS | keytool -importkeystore -destkeystore kafka.keystore.jks -srckeystore server.p12 -srcstoretype pkcs12 -alias "$HOST" -storepass "$PASS"
+keytool -importkeystore \
+    -destkeystore "$KEYSTORE" \
+    -srckeystore server.p12 \
+    -srcstoretype pkcs12 \
+    -alias "$HOST" \
+    -srcstorepass "$PASS" \
+    -deststorepass "$PASS"
 
 
 echo '= Import CA into java truststore'
 
-echo yes | keytool -keystore kafka.truststore.jks -alias CARoot -import -file ca.crt -storepass "$PASS"
+keytool -keystore "$TRUSTSTORE" -alias CARoot -import -file ca.crt -storepass "$PASS" -noprompt
