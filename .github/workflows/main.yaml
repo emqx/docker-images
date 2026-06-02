@@ -45,7 +45,7 @@ jobs:
         with:
           push: ${{ github.event_name == 'push' }}
           platforms: ${{ matrix.image[2] }}
-          tags: ghcr.io/emqx/${{ matrix.image[0] }}:${{ matrix.image[1] }}
+          tags: ${{ matrix.image[3] }}
           file: ${{ matrix.image[0] }}/Dockerfile
           context: ${{ matrix.image[0] }}
           cache-from: type=registry,mode=max,ref=ghcr.io/emqx/${{ matrix.image[0] }}:build-cache

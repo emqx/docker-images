@@ -11,7 +11,11 @@ while read dir; do
     else
         platforms='linux/amd64,linux/arm64'
     fi
-    img="[\"$dir\", \"$vsn\", \"$platforms\"]"
+    tags="ghcr.io/emqx/${dir}:${vsn}"
+    if [ "$dir" = "certgen" ]; then
+        tags="${tags},ghcr.io/emqx/${dir}:latest"
+    fi
+    img="[\"$dir\", \"$vsn\", \"$platforms\", \"$tags\"]"
     if [ -n "$IMGS" ]; then
         IMGS="${IMGS},${img}"
     else
