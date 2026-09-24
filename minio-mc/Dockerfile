@@ -1,0 +1,1 @@
+FROM thalesmg/minio-mc:RELEASE.2025-03-12T17-29-24Z
