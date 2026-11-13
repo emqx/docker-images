@@ -1,6 +1,6 @@
-"""emqx-rsf-wasm-server: an emqx-rsf/1 function server with a WebAssembly sandbox.
+"""emqx-rule-udf-wasm-server: an emqx-rsf/1 function server with a WebAssembly sandbox.
 
-It implements the protocol in `apps/emqx_rsf/PROTOCOL.md` for the `python3`
+It implements the protocol in `plugins/emqx_rsf/PROTOCOL.md` in emqx/emqx for the `python3`
 runtime. Each function is a Python snippet that defines `handle(*args)`. The server runs
 each function in its own pool of `wasmtime` processes. Each process runs CPython
 compiled to wasm32-wasip1. The guest gets no environment variables, no network,
@@ -31,9 +31,9 @@ import time
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-LOG = logging.getLogger("emqx-rsf-wasm-server")
+LOG = logging.getLogger("emqx-rule-udf-wasm-server")
 
-SERVER_NAME = "emqx-rsf-wasm-server"
+SERVER_NAME = "emqx-rule-udf-wasm-server"
 SERVER_VERSION = "0.1.0"
 PROTOCOL = "emqx-rsf/1"
 RUNTIME = "python3"

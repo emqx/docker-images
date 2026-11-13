@@ -1,10 +1,10 @@
 # syntax=docker/dockerfile:1
 #
-# emqx-rsf-wasm-server: user-defined Python functions in a WebAssembly sandbox.
+# emqx-rule-udf-wasm-server: user-defined Python functions in a WebAssembly sandbox.
 #
-#   docker build -t emqx-rsf-wasm-server .
+#   docker build -t emqx-rule-udf-wasm-server .
 #   docker run --rm -p 8080:8080 -e RSF_TOKEN=... --read-only \
-#     --cap-drop ALL --security-opt no-new-privileges emqx-rsf-wasm-server
+#     --cap-drop ALL --security-opt no-new-privileges emqx-rule-udf-wasm-server
 
 ARG PYTHON_HOST_IMAGE=python:3.14-slim
 ARG CPYTHON_WASI_VERSION=3.14.7

@@ -3,7 +3,7 @@
 # Needs curl and jq.
 #
 #   docker run -d --name emqx-rsf-demo -p 127.0.0.1:18480:8080 -e RSF_TOKEN=demo-token \
-#     --read-only --cap-drop ALL --security-opt no-new-privileges emqx-rsf-wasm-server:dev
+#     --read-only --cap-drop ALL --security-opt no-new-privileges emqx-rule-udf-wasm-server:dev
 #   ./demo.sh
 
 set -euo pipefail

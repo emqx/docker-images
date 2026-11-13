@@ -1,6 +1,6 @@
-# emqx-rsf-wasm-server
+# emqx-rule-udf-wasm-server
 
-`emqx-rsf-wasm-server` is a function server for the emqx-rsf/1 protocol. The
+`emqx-rule-udf-wasm-server` is a function server for the emqx-rsf/1 protocol. The
 protocol is defined in `plugins/emqx_rsf/PROTOCOL.md` in
 [emqx/emqx](https://github.com/emqx/emqx), next to the `emqx_rsf` plugin that
 calls this server. The server runs user-defined Python functions for EMQX rule
@@ -12,10 +12,10 @@ Wasmtime. The WebAssembly sandbox is the security boundary.
 ## Build and run
 
 The CI of this repository publishes the image as
-`ghcr.io/emqx/emqx-rsf-wasm-server:<vsn>` (see `vsn`). To build it locally:
+`ghcr.io/emqx/emqx-rule-udf-wasm-server:<vsn>` (see `vsn`). To build it locally:
 
 ```
-docker build -t emqx-rsf-wasm-server .
+docker build -t emqx-rule-udf-wasm-server .
 ```
 
 Run it:
@@ -25,7 +25,7 @@ docker run -d --name emqx-rsf -p 127.0.0.1:18480:8080 \
   -e RSF_TOKEN="$(openssl rand -hex 32)" \
   --read-only --cap-drop ALL --security-opt no-new-privileges \
   --pids-limit 256 --memory 1g \
-  emqx-rsf-wasm-server
+  emqx-rule-udf-wasm-server
 ```
 
 The image builds for `amd64` and `arm64` (`docker buildx build --platform ...`).
