@@ -117,9 +117,15 @@ show "${AUTH[@]}" -d '{"args": []}' "${URL}/v1/functions/hog/call"
 step "12. A call to an unknown function returns FUNCTION_NOT_FOUND"
 show "${AUTH[@]}" -d '{"args": []}' "${URL}/v1/functions/nope/call"
 
+step "12b. A call can carry the function: the server loads it and runs it in one request"
+SRC=$'def handle(a, b):\n    return a + b\n'
+SHA=$(printf 'python3\n%s' "$SRC" | sha256sum | cut -d' ' -f1)
+jq -n --arg src "$SRC" '{args: [1, 2], function: {runtime: "python3", source: $src}}' |
+  show "${AUTH[@]}" -H "UDF-Function-Sha256: ${SHA}" --data-binary @- "${URL}/v1/functions/add/call"
+
 step "13. List, inspect and delete"
 show "${AUTH[@]}" "${URL}/v1/functions"
 show "${AUTH[@]}" "${URL}/v1/functions/str_upper"
-for f in str_upper temp_f escape spin hog; do
+for f in str_upper temp_f escape spin hog add; do
   show "${AUTH[@]}" -X DELETE "${URL}/v1/functions/${f}"
 done
