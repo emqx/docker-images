@@ -34,7 +34,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 LOG = logging.getLogger("emqx-rule-udf-wasm-server")
 
 SERVER_NAME = "emqx-rule-udf-wasm-server"
-SERVER_VERSION = "0.1.0"
+SERVER_VERSION = "0.2.0"
 PROTOCOL = "emqx-rule-udf/1"
 RUNTIME = "python3"
 
@@ -645,6 +645,15 @@ class Handler(BaseHTTPRequestHandler):
     def _put(self, name):
         # The JSON encoding of a source is longer than the source itself.
         body = self._read_json(CONF.max_source * 2 + 1024)
+        fn, changed = self._load(name, body)
+        self._send_json(HTTPStatus.OK, dict(fn.info(), changed=changed))
+
+    def _load(self, name, body):
+        """Check a {"runtime", "source"} object and load it, as PUT does."""
+        if not isinstance(body, dict):
+            raise ApiError(
+                HTTPStatus.BAD_REQUEST, "BAD_REQUEST", "the function must be an object"
+            )
         runtime = body.get("runtime")
         source = body.get("source")
         if not isinstance(runtime, str) or not isinstance(source, str):
@@ -675,15 +684,19 @@ class Handler(BaseHTTPRequestHandler):
             )
         fn, changed = REGISTRY.put(name, runtime, source)
         LOG.info("function=%s sha256=%s changed=%s", name, fn.sha256, changed)
-        self._send_json(HTTPStatus.OK, dict(fn.info(), changed=changed))
+        return fn, changed
 
     def _call(self, name):
-        body = self._read_json(CONF.max_request)
+        # A call may carry the function: allow for its source as in PUT.
+        body = self._read_json(CONF.max_request + CONF.max_source * 2 + 1024)
         args = body.get("args")
         if not isinstance(args, list):
             raise ApiError(HTTPStatus.BAD_REQUEST, "BAD_REQUEST", "'args' must be a list")
-        fn = REGISTRY.get(name)
         want = self.headers.get("UDF-Function-Sha256")
+        if "function" in body:
+            fn = self._ensure_loaded(name, body["function"], want)
+        else:
+            fn = REGISTRY.get(name)
         if want is not None and want != fn.sha256:
             raise ApiError(
                 HTTPStatus.CONFLICT,
@@ -700,6 +713,37 @@ class Handler(BaseHTTPRequestHandler):
                 {"sha256": fn.sha256},
             )
         self._send_json(HTTPStatus.OK, {"result": reply.get("result"), "sha256": fn.sha256})
+
+    def _ensure_loaded(self, name, function, want):
+        """Load the function that a call carries, unless this version is loaded."""
+        if want is None:
+            raise ApiError(
+                HTTPStatus.BAD_REQUEST,
+                "BAD_REQUEST",
+                "a call with 'function' needs the UDF-Function-Sha256 header",
+            )
+        if (
+            not isinstance(function, dict)
+            or not isinstance(function.get("runtime"), str)
+            or not isinstance(function.get("source"), str)
+        ):
+            raise ApiError(
+                HTTPStatus.BAD_REQUEST,
+                "BAD_REQUEST",
+                "'function' must be {\"runtime\": string, \"source\": string}",
+            )
+        if version(function["runtime"], function["source"]) != want:
+            raise ApiError(
+                HTTPStatus.BAD_REQUEST,
+                "BAD_REQUEST",
+                "'function' does not match the UDF-Function-Sha256 header",
+            )
+        with REGISTRY.lock:
+            fn = REGISTRY.functions.get(name)
+        if fn is not None and fn.sha256 == want:
+            return fn
+        fn, _changed = self._load(name, function)
+        return fn
 
     # -- dispatch -----------------------------------------------------------
 

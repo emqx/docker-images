@@ -52,8 +52,9 @@ The server implements all of emqx-rule-udf/1 for the `python3` runtime
   The import check gives fast feedback to authors. It is not a security control.
 - Uploads run one at a time.
 - The server keeps functions in memory only. After a restart, calls return
-  `FUNCTION_NOT_FOUND`, and the client uploads the functions again
-  (`PROTOCOL.md`, section 9).
+  `FUNCTION_NOT_FOUND`, and the client repeats the call with the function in its
+  body (`PROTOCOL.md`, section 9). Instances behind a load balancer therefore
+  need no shared storage.
 
 ## Configuration
 
@@ -67,7 +68,7 @@ The server implements all of emqx-rule-udf/1 for the `python3` runtime
 | `UDF_LOAD_TIMEOUT_MS` | `10000` | Wall-clock limit for loading a function. |
 | `UDF_MAX_MEMORY_MB` | `128` | WebAssembly linear memory limit per worker. CPython needs at least 40. |
 | `UDF_MAX_SOURCE_BYTES` | `65536` | Largest source. |
-| `UDF_MAX_REQUEST_BYTES` | `1048576` | Largest call body. |
+| `UDF_MAX_REQUEST_BYTES` | `1048576` | Largest call body, plus room for a source when the call carries the function. |
 | `UDF_MAX_RESPONSE_BYTES` | `1048576` | Largest reply from a worker. |
 | `UDF_MAX_FUNCTIONS` | `64` | Largest number of functions. |
 | `UDF_MAX_CALLS_PER_WORKER` | `10000` | Calls before a worker is replaced. |
