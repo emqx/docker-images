@@ -1,6 +1,6 @@
 # emqx-rule-udf-wasm-server
 
-`emqx-rule-udf-wasm-server` is a function server for the emqx-rule-udf/1 protocol. The
+`emqx-rule-udf-wasm-server` is a function server for the emqx-rule-udf/2 protocol. The
 protocol is defined in `plugins/emqx_rule_udf/PROTOCOL.md` in
 [emqx/emqx](https://github.com/emqx/emqx), next to the `emqx_rule_udf` plugin that
 calls this server. The server runs user-defined Python functions for EMQX rule
@@ -36,10 +36,18 @@ It pins Wasmtime and the CPython WASI build by version and SHA-256.
 
 ## Protocol support
 
-The server implements all of emqx-rule-udf/1 for the `python3` runtime
+The server implements all of emqx-rule-udf/2 for the `python3` runtime
 (`PROTOCOL.md`, section 7.1). These details are specific to this server:
 
-- Each function has its own pool of `UDF_POOL_SIZE` worker processes. A worker
+- The server keeps no durable state. EMQX stores and names the functions. The
+  server keeps up to `UDF_CACHE_SIZE` loaded functions in memory, by version,
+  and drops the least recently used one to make room. A call for a version that
+  is not loaded returns `FUNCTION_NOT_FOUND`, and the client repeats the call
+  with the function in its body (`PROTOCOL.md`, section 9). So a restart loses
+  nothing, and instances behind a load balancer need no shared storage.
+- Functions with the same runtime and source share one loaded copy, whatever
+  their names.
+- Each loaded function has its own pool of `UDF_POOL_SIZE` worker processes. A worker
   serves many calls, one at a time. Module-level state stays alive between calls
   to the same worker. Do not rely on it: the server replaces workers after a
   failure and after `UDF_MAX_CALLS_PER_WORKER` calls.
@@ -50,11 +58,8 @@ The server implements all of emqx-rule-udf/1 for the `python3` runtime
   with a syntax error, without a top-level `handle`, with an import that is not
   in `ALLOWED_IMPORTS` (`server.py`), or that fails or times out while it loads.
   The import check gives fast feedback to authors. It is not a security control.
-- Uploads run one at a time.
-- The server keeps functions in memory only. After a restart, calls return
-  `FUNCTION_NOT_FOUND`, and the client repeats the call with the function in its
-  body (`PROTOCOL.md`, section 9). Instances behind a load balancer therefore
-  need no shared storage.
+- Validation loads the function in one worker, then stops the worker. Loads and
+  validations run one at a time.
 
 ## Configuration
 
@@ -70,7 +75,7 @@ The server implements all of emqx-rule-udf/1 for the `python3` runtime
 | `UDF_MAX_SOURCE_BYTES` | `65536` | Largest source. |
 | `UDF_MAX_REQUEST_BYTES` | `1048576` | Largest call body, plus room for a source when the call carries the function. |
 | `UDF_MAX_RESPONSE_BYTES` | `1048576` | Largest reply from a worker. |
-| `UDF_MAX_FUNCTIONS` | `64` | Largest number of functions. |
+| `UDF_CACHE_SIZE` | `64` | Loaded functions to keep. Each one keeps `UDF_POOL_SIZE` worker processes. |
 | `UDF_MAX_CALLS_PER_WORKER` | `10000` | Calls before a worker is replaced. |
 
 ## Security model
@@ -90,11 +95,11 @@ runs too long or when a reply is too large.
 
 **What the import check does not do.** A function can reach modules that are
 not in the allowlist through other modules, for example
-`json.decoder.re.enum.sys.modules["os"]`. Step 9 of `demo.sh` does this. The
+`json.decoder.re.enum.sys.modules["os"]`. Step 11 of `demo.sh` does this. The
 guest then gets `os`, but every call to the host fails, because the sandbox
 gives it nothing to reach.
 
-**Isolation between functions.** Each function has its own processes. One
+**Isolation between functions.** Each loaded function has its own processes. One
 function cannot read the state, arguments or results of another function.
 
 **Remaining risks:**

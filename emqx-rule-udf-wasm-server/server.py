@@ -34,8 +34,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 LOG = logging.getLogger("emqx-rule-udf-wasm-server")
 
 SERVER_NAME = "emqx-rule-udf-wasm-server"
-SERVER_VERSION = "0.2.0"
-PROTOCOL = "emqx-rule-udf/1"
+SERVER_VERSION = "0.3.0"
+PROTOCOL = "emqx-rule-udf/2"
 RUNTIME = "python3"
 
 NAME_RE = re.compile(r"^[A-Za-z0-9_-][A-Za-z0-9._-]{0,63}\Z")
@@ -105,7 +105,7 @@ class Config:
         self.max_source = _env_int("UDF_MAX_SOURCE_BYTES", 64 * 1024)
         self.max_request = _env_int("UDF_MAX_REQUEST_BYTES", 1024 * 1024)
         self.max_response = _env_int("UDF_MAX_RESPONSE_BYTES", 1024 * 1024)
-        self.max_functions = _env_int("UDF_MAX_FUNCTIONS", 64)
+        self.cache_size = _env_int("UDF_CACHE_SIZE", 64)
         self.max_calls_per_worker = _env_int("UDF_MAX_CALLS_PER_WORKER", 10000)
         here = os.path.dirname(os.path.abspath(__file__))
         with open(os.path.join(here, "guest_runner.py"), encoding="utf-8") as f:
@@ -132,7 +132,7 @@ class ApiError(Exception):
 
 
 def version(runtime, source):
-    """Return the emqx-rule-udf/1 version of a function: see PROTOCOL.md, section 4."""
+    """Return the emqx-rule-udf/2 version of a function: see PROTOCOL.md, section 4."""
     data = runtime.encode("utf-8") + b"\n" + source.encode("utf-8")
     return hashlib.sha256(data).hexdigest()
 
@@ -351,6 +351,9 @@ class Worker:
 
 
 class Function:
+    """The loaded workers for one version of a function. Functions with the same
+    runtime and source share one `Function`, whatever their names."""
+
     def __init__(self, name, runtime, source):
         self.name = name
         self.runtime = runtime
@@ -359,7 +362,7 @@ class Function:
         self.created_at = time.time()
         self.closed = False
         self.slots = queue.Queue()
-        # Start one worker first: a load error then fails the upload fast.
+        # Start one worker first: a load error then fails the load fast.
         workers = [Worker(name, source)]
         try:
             for _ in range(CONF.pool_size - 1):
@@ -370,15 +373,6 @@ class Function:
             raise
         for w in workers:
             self.slots.put(w)
-
-    def info(self):
-        return {
-            "name": self.name,
-            "runtime": self.runtime,
-            "sha256": self.sha256,
-            "pool_size": CONF.pool_size,
-            "created_at": self.created_at,
-        }
 
     def _acquire(self):
         try:
@@ -392,7 +386,7 @@ class Function:
             raise ApiError(
                 HTTPStatus.SERVICE_UNAVAILABLE,
                 "UNAVAILABLE",
-                "the function was replaced or deleted, retry the call",
+                "the function was dropped from the cache, retry the call",
             )
         if worker is not None and (
             not worker.alive() or worker.calls >= CONF.max_calls_per_worker
@@ -445,64 +439,47 @@ class Function:
                 worker.kill()
 
 
-class Registry:
+class Cache:
+    """Loaded functions by version, least recently used first. A full cache
+    drops the least recently used function to make room."""
+
     def __init__(self):
         self.lock = threading.Lock()
-        # Uploads run one at a time. A burst of identical uploads, for example
-        # from many clients after a server restart, then starts one pool.
-        self.put_lock = threading.Lock()
-        self.functions = {}
+        # Loads run one at a time. A burst of calls that carry the same function,
+        # for example from many clients after a server restart, then starts one
+        # pool.
+        self.load_lock = threading.Lock()
+        self.functions = collections.OrderedDict()
 
-    def get(self, name):
+    def get(self, sha256):
         with self.lock:
-            fn = self.functions.get(name)
-        if fn is None:
-            raise ApiError(
-                HTTPStatus.NOT_FOUND, "FUNCTION_NOT_FOUND", "no such function"
-            )
+            fn = self.functions.get(sha256)
+            if fn is not None:
+                self.functions.move_to_end(sha256)
+            return fn
+
+    def load(self, name, runtime, source):
+        sha = version(runtime, source)
+        with self.load_lock:
+            fn = self.get(sha)
+            if fn is not None:
+                return fn
+            fn = Function(name, runtime, source)
+            with self.lock:
+                self.functions[sha] = fn
+                dropped = []
+                while len(self.functions) > CONF.cache_size:
+                    dropped.append(self.functions.popitem(last=False)[1])
+        for old in dropped:
+            LOG.info("function=%s sha256=%s dropped from the cache", old.name, old.sha256)
+            old.close()
+        LOG.info("function=%s sha256=%s loaded", name, sha)
         return fn
 
-    def list(self):
-        with self.lock:
-            return [fn.info() for fn in self.functions.values()]
-
-    def put(self, name, runtime, source):
-        with self.put_lock:
-            return self._put(name, runtime, source)
-
-    def _put(self, name, runtime, source):
-        with self.lock:
-            old = self.functions.get(name)
-            if old is None and len(self.functions) >= CONF.max_functions:
-                raise ApiError(
-                    HTTPStatus.CONFLICT, "TOO_MANY_FUNCTIONS", "too many functions"
-                )
-        sha = version(runtime, source)
-        if old is not None and old.sha256 == sha:
-            return old, False
-        # Start the new pool outside the lock. The old version keeps serving
-        # calls until the new version is ready.
-        new = Function(name, runtime, source)
-        with self.lock:
-            old = self.functions.get(name)
-            if old is None and len(self.functions) >= CONF.max_functions:
-                new.close()
-                raise ApiError(
-                    HTTPStatus.CONFLICT, "TOO_MANY_FUNCTIONS", "too many functions"
-                )
-            self.functions[name] = new
-        if old is not None:
-            old.close()
-        return new, True
-
-    def delete(self, name):
-        with self.lock:
-            fn = self.functions.pop(name, None)
-        if fn is None:
-            raise ApiError(
-                HTTPStatus.NOT_FOUND, "FUNCTION_NOT_FOUND", "no such function"
-            )
-        fn.close()
+    def validate(self, name, runtime, source):
+        """Load the source in one worker to check it, and keep nothing."""
+        with self.load_lock:
+            Worker(name, source).kill()
 
     def close_all(self):
         with self.lock:
@@ -512,7 +489,7 @@ class Registry:
             fn.close()
 
 
-REGISTRY = Registry()
+CACHE = Cache()
 
 
 # ---------------------------------------------------------------------------
@@ -583,36 +560,16 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/healthz" and method == "GET":
             return self._healthz()
         self._check_auth()
-        parts = path.strip("/").split("/")
-        if parts == ["v1", "info"]:
+        if path == "/v2/info":
             self._allow(method, "GET")
             return self._send_json(HTTPStatus.OK, self._info())
-        if parts[:2] != ["v1", "functions"] or len(parts) > 4:
-            raise ApiError(HTTPStatus.NOT_FOUND, "NOT_FOUND", "no such endpoint")
-        rest = parts[2:]
-        if not rest:
-            self._allow(method, "GET")
-            return self._send_json(HTTPStatus.OK, {"functions": REGISTRY.list()})
-        if len(rest) == 2 and rest[1] != "call":
-            raise ApiError(HTTPStatus.NOT_FOUND, "NOT_FOUND", "no such endpoint")
-        name = rest[0]
-        if not NAME_RE.match(name):
-            raise ApiError(
-                HTTPStatus.BAD_REQUEST,
-                "BAD_REQUEST",
-                "name must match %s" % NAME_RE.pattern,
-            )
-        if len(rest) == 2:
+        if path == "/v2/validate":
             self._allow(method, "POST")
-            return self._call(name)
-        self._allow(method, "GET", "PUT", "DELETE")
-        if method == "PUT":
-            return self._put(name)
-        if method == "GET":
-            fn = REGISTRY.get(name)
-            return self._send_json(HTTPStatus.OK, dict(fn.info(), source=fn.source))
-        REGISTRY.delete(name)
-        return self._send_json(HTTPStatus.OK, {"deleted": name})
+            return self._validate()
+        if path == "/v2/call":
+            self._allow(method, "POST")
+            return self._call()
+        raise ApiError(HTTPStatus.NOT_FOUND, "NOT_FOUND", "no such endpoint")
 
     @staticmethod
     def _allow(method, *allowed):
@@ -637,19 +594,19 @@ class Handler(BaseHTTPRequestHandler):
                 "max_source_bytes": CONF.max_source,
                 "max_request_bytes": CONF.max_request,
                 "max_response_bytes": CONF.max_response,
-                "max_functions": CONF.max_functions,
                 "call_timeout_ms": int(CONF.call_timeout * 1000),
             },
         }
 
-    def _put(self, name):
+    def _validate(self):
         # The JSON encoding of a source is longer than the source itself.
         body = self._read_json(CONF.max_source * 2 + 1024)
-        fn, changed = self._load(name, body)
-        self._send_json(HTTPStatus.OK, dict(fn.info(), changed=changed))
+        runtime, source = self._check_function(body)
+        CACHE.validate("validate", runtime, source)
+        self._send_json(HTTPStatus.OK, {"sha256": version(runtime, source)})
 
-    def _load(self, name, body):
-        """Check a {"runtime", "source"} object and load it, as PUT does."""
+    def _check_function(self, body):
+        """Check a {"runtime", "source"} object. Return the runtime and the source."""
         if not isinstance(body, dict):
             raise ApiError(
                 HTTPStatus.BAD_REQUEST, "BAD_REQUEST", "the function must be an object"
@@ -682,68 +639,44 @@ class Handler(BaseHTTPRequestHandler):
                 "the snippet failed the check",
                 {"problems": problems},
             )
-        fn, changed = REGISTRY.put(name, runtime, source)
-        LOG.info("function=%s sha256=%s changed=%s", name, fn.sha256, changed)
-        return fn, changed
+        return runtime, source
 
-    def _call(self, name):
-        # A call may carry the function: allow for its source as in PUT.
+    def _call(self):
+        # A call may carry the function: allow for its source as in validate.
         body = self._read_json(CONF.max_request + CONF.max_source * 2 + 1024)
+        name = body.get("name")
+        if not isinstance(name, str) or not NAME_RE.match(name):
+            raise ApiError(
+                HTTPStatus.BAD_REQUEST,
+                "BAD_REQUEST",
+                "'name' must match %s" % NAME_RE.pattern,
+            )
+        sha = body.get("sha256")
+        if not isinstance(sha, str):
+            raise ApiError(HTTPStatus.BAD_REQUEST, "BAD_REQUEST", "'sha256' must be a string")
         args = body.get("args")
         if not isinstance(args, list):
             raise ApiError(HTTPStatus.BAD_REQUEST, "BAD_REQUEST", "'args' must be a list")
-        want = self.headers.get("UDF-Function-Sha256")
-        if "function" in body:
-            fn = self._ensure_loaded(name, body["function"], want)
-        else:
-            fn = REGISTRY.get(name)
-        if want is not None and want != fn.sha256:
-            raise ApiError(
-                HTTPStatus.CONFLICT,
-                "SHA256_MISMATCH",
-                "this server has a different version of the function",
-                {"sha256": fn.sha256},
-            )
+        fn = CACHE.get(sha)
+        if fn is None:
+            if "function" not in body:
+                raise ApiError(
+                    HTTPStatus.NOT_FOUND,
+                    "FUNCTION_NOT_FOUND",
+                    "this version of the function is not loaded, send it with the call",
+                )
+            runtime, source = self._check_function(body["function"])
+            if version(runtime, source) != sha:
+                raise ApiError(
+                    HTTPStatus.BAD_REQUEST,
+                    "BAD_REQUEST",
+                    "'function' does not match 'sha256'",
+                )
+            fn = CACHE.load(name, runtime, source)
         reply = fn.call(args)
         if "error" in reply:
-            raise ApiError(
-                HTTPStatus.UNPROCESSABLE_ENTITY,
-                "FUNCTION_ERROR",
-                reply["error"],
-                {"sha256": fn.sha256},
-            )
-        self._send_json(HTTPStatus.OK, {"result": reply.get("result"), "sha256": fn.sha256})
-
-    def _ensure_loaded(self, name, function, want):
-        """Load the function that a call carries, unless this version is loaded."""
-        if want is None:
-            raise ApiError(
-                HTTPStatus.BAD_REQUEST,
-                "BAD_REQUEST",
-                "a call with 'function' needs the UDF-Function-Sha256 header",
-            )
-        if (
-            not isinstance(function, dict)
-            or not isinstance(function.get("runtime"), str)
-            or not isinstance(function.get("source"), str)
-        ):
-            raise ApiError(
-                HTTPStatus.BAD_REQUEST,
-                "BAD_REQUEST",
-                "'function' must be {\"runtime\": string, \"source\": string}",
-            )
-        if version(function["runtime"], function["source"]) != want:
-            raise ApiError(
-                HTTPStatus.BAD_REQUEST,
-                "BAD_REQUEST",
-                "'function' does not match the UDF-Function-Sha256 header",
-            )
-        with REGISTRY.lock:
-            fn = REGISTRY.functions.get(name)
-        if fn is not None and fn.sha256 == want:
-            return fn
-        fn, _changed = self._load(name, function)
-        return fn
+            raise ApiError(HTTPStatus.UNPROCESSABLE_ENTITY, "FUNCTION_ERROR", reply["error"])
+        self._send_json(HTTPStatus.OK, {"result": reply.get("result")})
 
     # -- dispatch -----------------------------------------------------------
 
@@ -773,14 +706,8 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         self._dispatch("GET")
 
-    def do_PUT(self):
-        self._dispatch("PUT")
-
     def do_POST(self):
         self._dispatch("POST")
-
-    def do_DELETE(self):
-        self._dispatch("DELETE")
 
 
 # ---------------------------------------------------------------------------
@@ -833,7 +760,7 @@ def main():
     except KeyboardInterrupt:
         pass
     finally:
-        REGISTRY.close_all()
+        CACHE.close_all()
 
 
 if __name__ == "__main__":
