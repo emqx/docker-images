@@ -1,6 +1,6 @@
 # emqx-rule-udf-wasm-server
 
-`emqx-rule-udf-wasm-server` is a function server for the emqx-rule-udf/2 protocol. The
+`emqx-rule-udf-wasm-server` is a function server for the emqx-rule-udf/1 protocol. The
 protocol is defined in `plugins/emqx_rule_udf/PROTOCOL.md` in
 [emqx/emqx](https://github.com/emqx/emqx), next to the `emqx_rule_udf` plugin that
 calls this server. The server runs user-defined Python functions for EMQX rule
@@ -36,7 +36,7 @@ It pins Wasmtime and the CPython WASI build by version and SHA-256.
 
 ## Protocol support
 
-The server implements all of emqx-rule-udf/2 for the `python3` runtime
+The server implements all of emqx-rule-udf/1 for the `python3` runtime
 (`PROTOCOL.md`, section 7.1). These details are specific to this server:
 
 - The server keeps no durable state. EMQX stores and names the functions. The

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Walk through the emqx-rule-udf/2 protocol (plugins/emqx_rule_udf/PROTOCOL.md in emqx/emqx) with curl.
+# Walk through the emqx-rule-udf/1 protocol (plugins/emqx_rule_udf/PROTOCOL.md in emqx/emqx) with curl.
 # Needs curl and jq.
 #
 #   docker run -d --name emqx-rule-udf-demo -p 127.0.0.1:18480:8080 -e UDF_TOKEN=demo-token \
@@ -23,7 +23,7 @@ fn() {
 # validate NAME: check the function, as EMQX does when it saves a program.
 validate() {
   show "${AUTH[@]}" -H 'Content-Type: application/json' --data-binary @"${WORK}/$1.json" \
-    "${URL}/v2/validate"
+    "${URL}/v1/validate"
 }
 
 sha() {
@@ -35,7 +35,7 @@ call() {
   jq -n --arg name "$1" --arg sha "$(sha "$1")" --argjson args "$2" \
     --slurpfile f "${WORK}/$1.json" --arg with "${3:-}" \
     '{name: $name, sha256: $sha, args: $args} + (if $with == "" then {} else {function: $f[0]} end)' |
-    show "${AUTH[@]}" -H 'Content-Type: application/json' --data-binary @- "${URL}/v2/call"
+    show "${AUTH[@]}" -H 'Content-Type: application/json' --data-binary @- "${URL}/v1/call"
 }
 
 WORK=$(mktemp -d)
@@ -45,10 +45,10 @@ step "1. Health check (no token needed)"
 show "${URL}/healthz"
 
 step "2. Every other endpoint needs the token"
-show "${URL}/v2/info"
+show "${URL}/v1/info"
 
 step "3. Server info: protocol, runtimes and limits"
-show "${AUTH[@]}" "${URL}/v2/info"
+show "${AUTH[@]}" "${URL}/v1/info"
 
 step "4. Validate a function: str_upper(s). The server keeps nothing"
 fn str_upper <<'EOF'

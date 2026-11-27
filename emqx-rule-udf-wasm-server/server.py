@@ -34,8 +34,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 LOG = logging.getLogger("emqx-rule-udf-wasm-server")
 
 SERVER_NAME = "emqx-rule-udf-wasm-server"
-SERVER_VERSION = "0.3.0"
-PROTOCOL = "emqx-rule-udf/2"
+SERVER_VERSION = "0.3.1"
+PROTOCOL = "emqx-rule-udf/1"
 RUNTIME = "python3"
 
 NAME_RE = re.compile(r"^[A-Za-z0-9_-][A-Za-z0-9._-]{0,63}\Z")
@@ -132,7 +132,7 @@ class ApiError(Exception):
 
 
 def version(runtime, source):
-    """Return the emqx-rule-udf/2 version of a function: see PROTOCOL.md, section 4."""
+    """Return the emqx-rule-udf/1 version of a function: see PROTOCOL.md, section 4."""
     data = runtime.encode("utf-8") + b"\n" + source.encode("utf-8")
     return hashlib.sha256(data).hexdigest()
 
@@ -560,13 +560,13 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/healthz" and method == "GET":
             return self._healthz()
         self._check_auth()
-        if path == "/v2/info":
+        if path == "/v1/info":
             self._allow(method, "GET")
             return self._send_json(HTTPStatus.OK, self._info())
-        if path == "/v2/validate":
+        if path == "/v1/validate":
             self._allow(method, "POST")
             return self._validate()
-        if path == "/v2/call":
+        if path == "/v1/call":
             self._allow(method, "POST")
             return self._call()
         raise ApiError(HTTPStatus.NOT_FOUND, "NOT_FOUND", "no such endpoint")
